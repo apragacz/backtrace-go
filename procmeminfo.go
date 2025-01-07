@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -48,22 +49,51 @@ var (
 		"VmPeak":                     "vm.vma.peak",
 		"VmSize":                     "vm.vma.size",
 	}
+	memProcInfoAttrs   = map[string]string{}
+	memProcInfoAttrsMu sync.RWMutex
 )
 
-func readMemProcInfo() {
+func updateMemProcInfo() {
 	for _, path := range paths {
-		readFile(path)
+		fileKVMap := readKeyValueFile(path)
+		updateMemProcInfoAttrsFromFileKVMap(fileKVMap)
 	}
 }
 
-func readFile(path string) {
+func updateAttrsWithProcMemInfo(attributes map[string]interface{}) {
+	memProcInfoAttrsMu.RLock()
+	defer memProcInfoAttrsMu.RUnlock()
+
+	for k, v := range memProcInfoAttrs {
+		attributes[k] = v
+	}
+}
+
+func updateMemProcInfoAttrsFromFileKVMap(fileKVMap map[string]string) {
+	memProcInfoAttrsMu.Lock()
+	defer memProcInfoAttrsMu.Unlock()
+	for k, v := range fileKVMap {
+		if attr, exists := mapper[k]; exists {
+			memProcInfoAttrs[attr] = v
+		}
+	}
+}
+
+func readKeyValueFile(path string) map[string]string {
 	file, err := os.Open(path)
 	if err != nil {
-		log.Fatal(err)
+		if Options.DebugBacktrace {
+			log.Printf("readKeyValueFile err: %v", err)
+		}
+		return map[string]string{}
 	}
 	defer file.Close()
+	return readKeyValueLines(file)
+}
 
-	reader := bufio.NewReader(file)
+func readKeyValueLines(r io.Reader) map[string]string {
+	m := make(map[string]string)
+	reader := bufio.NewReader(r)
 	for {
 		l, _, err := reader.ReadLine()
 		if err != nil {
@@ -71,7 +101,7 @@ func readFile(path string) {
 				break
 			} else {
 				if Options.DebugBacktrace {
-					log.Printf("readFile err: %v", err)
+					log.Printf("readKeyValueLines err: %v", err)
 				}
 				break
 			}
@@ -79,25 +109,28 @@ func readFile(path string) {
 
 		values := strings.Split(string(l), ":")
 		if len(values) == 2 {
-			if attr, exists := mapper[values[0]]; exists {
-				value, err := getValue(values[1])
-				if err != nil {
-					continue
+			attr := values[0]
+			value, err := getNormalizedValue(values[1])
+			if err != nil {
+				if Options.DebugBacktrace {
+					log.Printf("readKeyValueLines err: %v", err)
 				}
-				Options.Attributes[attr] = value
+				continue
 			}
+
+			m[attr] = value
 		}
 	}
+	return m
 }
 
-func getValue(value string) (string, error) {
+func getNormalizedValue(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if strings.HasSuffix(value, "kB") {
 		value = strings.TrimSuffix(value, " kB")
 
 		atoi, err := strconv.ParseInt(value, 10, 64)
-		if err != nil && Options.DebugBacktrace {
-			log.Printf("readFile err: %v", err)
+		if err != nil {
 			return "", err
 		}
 		atoi *= 1024
