@@ -16,6 +16,11 @@ const (
 	procPath = "/proc/self/status"
 )
 
+type MemProcInfo struct {
+	attrs map[string]interface{}
+	mu    sync.RWMutex
+}
+
 var (
 	paths  = []string{memPath, procPath}
 	mapper = map[string]string{
@@ -49,34 +54,46 @@ var (
 		"VmPeak":                     "vm.vma.peak",
 		"VmSize":                     "vm.vma.size",
 	}
-	memProcInfoAttrs   = map[string]string{}
-	memProcInfoAttrsMu sync.RWMutex
+	memProcInfo MemProcInfo
 )
 
-func updateMemProcInfo() {
-	for _, path := range paths {
-		fileKVMap := readKeyValueFile(path)
-		updateMemProcInfoAttrsFromFileKVMap(fileKVMap)
+// UpdateInputAttrs updates passed-in attributes in-place with the data contained
+// in MemProcInfo struct.
+func (mpi *MemProcInfo) UpdateInputAttrs(attributes map[string]interface{}) {
+	if attributes == nil {
+		return
 	}
-}
+	mpi.mu.RLock()
+	defer mpi.mu.RUnlock()
 
-func updateAttrsWithProcMemInfo(attributes map[string]interface{}) {
-	memProcInfoAttrsMu.RLock()
-	defer memProcInfoAttrsMu.RUnlock()
-
-	for k, v := range memProcInfoAttrs {
+	for k, v := range mpi.attrs {
 		attributes[k] = v
 	}
 }
 
-func updateMemProcInfoAttrsFromFileKVMap(fileKVMap map[string]string) {
-	memProcInfoAttrsMu.Lock()
-	defer memProcInfoAttrsMu.Unlock()
+// UpdateFromFileKVMap updates MemProcInfo with the key-value mapping parsed from /proc/... files.
+func (mpi *MemProcInfo) UpdateFromFileKVMap(fileKVMap map[string]string) {
+	mpi.mu.Lock()
+	defer mpi.mu.Unlock()
+	if mpi.attrs == nil {
+		mpi.attrs = make(map[string]interface{}, len(fileKVMap))
+	}
 	for k, v := range fileKVMap {
 		if attr, exists := mapper[k]; exists {
-			memProcInfoAttrs[attr] = v
+			mpi.attrs[attr] = v
 		}
 	}
+}
+
+func updateMemProcInfo() {
+	for _, path := range paths {
+		fileKVMap := readKeyValueFile(path)
+		memProcInfo.UpdateFromFileKVMap(fileKVMap)
+	}
+}
+
+func updateAttrsWithProcMemInfo(attributes map[string]interface{}) {
+	memProcInfo.UpdateInputAttrs(attributes)
 }
 
 func readKeyValueFile(path string) map[string]string {
