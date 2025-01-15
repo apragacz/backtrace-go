@@ -28,7 +28,14 @@ func Test_MemProcInfo_UpdateFromFileKVMap(t *testing.T) {
 }
 
 func Test_MemProcInfo_UpdateInputAttrs(t *testing.T) {
-	t.Run("ok", func(t *testing.T) {
+	t.Run("ok_empty", func(t *testing.T) {
+		mpi := MemProcInfo{}
+		attrs := make(map[string]interface{})
+		mpi.UpdateInputAttrs(attrs)
+		requireEqual(t, map[string]interface{}{}, attrs)
+	})
+
+	t.Run("ok_simple", func(t *testing.T) {
 		mpi := MemProcInfo{}
 		mpi.attrs = map[string]interface{}{
 			"system.memory.total": "1033457664",
